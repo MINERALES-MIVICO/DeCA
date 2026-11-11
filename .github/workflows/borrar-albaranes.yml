@@ -1,0 +1,80 @@
+name: Borrar albaranes caducados
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: borrar-albaranes
+  cancel-in-progress: false
+
+jobs:
+  limpieza:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio e historial
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Eliminar PDF con cuatro días de antigüedad
+        shell: python
+        run: |
+          import subprocess
+          import time
+          from pathlib import Path
+
+          limite = time.time() - 4 * 24 * 60 * 60
+
+          archivos = subprocess.check_output(
+              ["git", "ls-files", "-z"]
+          ).split(b"\0")
+
+          for archivo in archivos:
+              if not archivo:
+                  continue
+
+              ruta = archivo.decode("utf-8")
+
+              if Path(ruta).suffix.lower() != ".pdf":
+                  continue
+
+              fecha = subprocess.check_output(
+                  [
+                      "git", "log", "-1",
+                      "--diff-filter=A",
+                      "--format=%ct",
+                      "--", ruta
+                  ],
+                  text=True
+              ).strip()
+
+              if not fecha:
+                  print(f"Sin fecha de alta: {ruta}")
+                  continue
+
+              if int(fecha) <= limite:
+                  subprocess.run(
+                      ["git", "rm", "--", ruta],
+                      check=True
+                  )
+                  print(f"Eliminado: {ruta}")
+
+      - name: Guardar los borrados
+        shell: bash
+        run: |
+          if git diff --cached --quiet; then
+            echo "No hay PDF caducados."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Eliminar albaranes con más de cuatro días"
+          git push origin HEAD:main
